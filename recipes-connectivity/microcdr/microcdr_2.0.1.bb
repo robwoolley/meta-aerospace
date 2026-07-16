@@ -25,6 +25,7 @@ EXTRA_OECMAKE = " \
     -DBUILD_SHARED_LIBS=OFF \
     -DUCDR_PIC=OFF \
     -DUCDR_BUILD_TESTS=OFF \
+    -DUCDR_ISOLATED_INSTALL=OFF \
 "
 
 # Static library and headers only.
