@@ -1,0 +1,52 @@
+From: Rob Woolley <rob.woolley@windriver.com>
+Subject: msg: support using a pre-built CycloneDDS idlc
+
+With CONFIG_LIB_CDRSTREAM the configure step runs `git submodule` and
+builds the vendored CycloneDDS with a hardcoded /usr/bin/gcc and ccache
+launchers just to obtain the idlc code generator. That contaminates
+cross builds with host tools. Add PX4_BUILD_IDLC (default ON, existing
+behaviour); when OFF, a host idlc built from the same CycloneDDS fork
+(with cdrstream-desc support) must be on the PATH, where cyclonedds'
+Generate.cmake already looks it up when cross-compiling.
+
+Upstream-Status: Inappropriate [needs discussion upstream first]
+
+Signed-off-by: Rob Woolley <rob.woolley@windriver.com>
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+Index: git/msg/CMakeLists.txt
+===================================================================
+--- git.orig/msg/CMakeLists.txt
++++ git/msg/CMakeLists.txt
+@@ -432,6 +432,14 @@ if(CONFIG_LIB_CDRSTREAM)
+ 	set(idl_rihs01_out_path ${idl_include_path}/px4)
+ 	set(idl_uorb_path ${PX4_BINARY_DIR}/msg/px4/msg)
+ 
++	# When cross-compiling with an external build system (e.g. Yocto/OpenEmbedded)
++	# a host idlc built from the same CycloneDDS sources (with cdrstream-desc
++	# support) must be provided on the PATH and this configure-time bootstrap
++	# disabled with -DPX4_BUILD_IDLC=OFF.
++	option(PX4_BUILD_IDLC "Build the CycloneDDS idlc compiler from source at configure time" ON)
++
++	if(PX4_BUILD_IDLC)
++
+ 	# Make sure that CycloneDDS has been checkout out
+ 	execute_process(COMMAND git submodule sync src/lib/cdrstream/cyclonedds
+ 			WORKING_DIRECTORY ${PX4_SOURCE_DIR} )
+@@ -454,6 +462,16 @@ if(CONFIG_LIB_CDRSTREAM)
+ 			OUTPUT_FILE CMD_OUTPUT )
+ 	list(APPEND CMAKE_PROGRAM_PATH "${CMAKE_CURRENT_BINARY_DIR}/idlc/bin")
+ 
++	else()
++		# Use a pre-built idlc from the environment; cyclonedds' Generate.cmake
++		# looks it up with find_program(idlc) when cross-compiling.
++		find_program(PX4_IDLC_EXECUTABLE idlc NO_CMAKE_FIND_ROOT_PATH)
++		if(NOT PX4_IDLC_EXECUTABLE)
++			message(FATAL_ERROR "PX4_BUILD_IDLC=OFF requires an idlc executable (built with cdrstream-desc support) on the PATH")
++		endif()
++		MESSAGE(STATUS "Using pre-built idlc: ${PX4_IDLC_EXECUTABLE}")
++	endif() # PX4_BUILD_IDLC
++
+ 	# Copy .msg files
+ 	foreach(msg_file ${msg_files})
+ 		get_filename_component(msg ${msg_file} NAME_WE)

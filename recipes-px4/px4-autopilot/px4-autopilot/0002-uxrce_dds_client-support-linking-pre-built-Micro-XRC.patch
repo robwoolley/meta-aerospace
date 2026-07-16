@@ -1,0 +1,81 @@
+From: Rob Woolley <rob.woolley@windriver.com>
+Subject: uxrce_dds_client: support linking pre-built Micro XRCE-DDS libraries
+
+The nested ExternalProject build of Micro-XRCE-DDS-Client fetches
+Micro-CDR from GitHub at build time (UCLIENT_BUILD_MICROCDR=ON makes its
+SuperBuild skip find_package and clone eProsima/Micro-CDR). That is not
+possible in offline distro builds. Add UXRCE_DDS_CLIENT_USE_SYSTEM_LIBS
+to link libmicroxrcedds_client/libmicrocdr from the sysroot instead.
+
+Upstream-Status: Inappropriate [needs discussion upstream first]
+
+Signed-off-by: Rob Woolley <rob.woolley@windriver.com>
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+Index: git/src/modules/uxrce_dds_client/CMakeLists.txt
+===================================================================
+--- git.orig/src/modules/uxrce_dds_client/CMakeLists.txt
++++ git/src/modules/uxrce_dds_client/CMakeLists.txt
+@@ -31,9 +31,33 @@
+ #
+ ############################################################################
+ 
++# Allow linking pre-built Micro XRCE-DDS Client and Micro CDR libraries
++# (e.g. staged in a Yocto/OpenEmbedded sysroot) instead of building them in
++# a nested CMake build, which fetches Micro-CDR from the network. The
++# pre-built libraries must be configured with the same UCLIENT_* profile
++# options as the nested build below.
++option(UXRCE_DDS_CLIENT_USE_SYSTEM_LIBS "Link pre-built Micro XRCE-DDS Client and Micro CDR libraries" OFF)
++
+ if(${CMAKE_VERSION} VERSION_LESS_EQUAL "3.15")
+ 	message(WARNING "skipping uxrce_dds_client, Micro-XRCE-DDS-Client needs to be fixed to work with CMAKE_VERSION ${CMAKE_VERSION}")
++else()
++
++# Refrain from indenting to reduce unnecessary changes in patch file
++if(UXRCE_DDS_CLIENT_USE_SYSTEM_LIBS)
++	find_library(microxrceddsclient_lib NAMES microxrcedds_client)
++	find_library(microcdr_lib NAMES microcdr)
++	find_path(microxrceddsclient_include_dir NAMES uxr/client/client.h)
++	find_path(microcdr_include_dir NAMES ucdr/microcdr.h)
++
++	if(NOT microxrceddsclient_lib OR NOT microcdr_lib OR NOT microxrceddsclient_include_dir OR NOT microcdr_include_dir)
++		message(FATAL_ERROR "UXRCE_DDS_CLIENT_USE_SYSTEM_LIBS=ON but the Micro XRCE-DDS Client or Micro CDR library/headers were not found")
++	endif()
+ 
++	add_library(microxrceddsclient INTERFACE)
++	target_link_libraries(microxrceddsclient INTERFACE ${microxrceddsclient_lib} ${microcdr_lib})
++	target_include_directories(microxrceddsclient INTERFACE ${microxrceddsclient_include_dir} ${microcdr_include_dir})
++
++	set(uxrce_dds_client_deps microxrceddsclient)
+ else()
+ 
+ 	set(microxrceddsclient_src_dir   ${CMAKE_CURRENT_SOURCE_DIR}/Micro-XRCE-DDS-Client)
+@@ -114,6 +138,15 @@ else()
+ 	add_dependencies(microxrceddsclient libmicroxrceddsclient_project)
+ 	target_include_directories(microxrceddsclient INTERFACE ${microxrceddsclient_build_dir}/include)
+ 
++	set(uxrce_dds_client_deps
++		git_micro_xrce_dds_client
++		libmicroxrceddsclient_project
++		microxrceddsclient
++		libmicroxrceddsclient
++		libmicrocdr
++	)
++
++endif() # UXRCE_DDS_CLIENT_USE_SYSTEM_LIBS
+ 
+ 	add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dds_topics.h
+ 		COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/generate_dds_topics.py
+@@ -147,11 +180,7 @@ else()
+ 			srv_base.cpp
+ 			srv_base.h
+ 		DEPENDS
+-			git_micro_xrce_dds_client
+-			libmicroxrceddsclient_project
+-			microxrceddsclient
+-			libmicroxrceddsclient
+-			libmicrocdr
++			${uxrce_dds_client_deps}
+ 			timesync
+ 			topic_bridge_files
+ 			uorb_ucdr_headers

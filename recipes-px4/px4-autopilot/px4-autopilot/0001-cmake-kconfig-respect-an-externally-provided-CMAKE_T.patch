@@ -1,0 +1,32 @@
+From: Rob Woolley <rob.woolley@windriver.com>
+Subject: cmake: kconfig: respect an externally provided CMAKE_TOOLCHAIN_FILE
+
+Build systems such as Yocto/OpenEmbedded pass their own cross toolchain
+via -DCMAKE_TOOLCHAIN_FILE. Force-overriding it from the board config
+makes subprojects that forward CMAKE_TOOLCHAIN_FILE (e.g. the
+Micro-XRCE-DDS-Client ExternalProject) pick PX4's bare-triple toolchain
+without the distro sysroot. Only apply the board toolchain as a default.
+
+Upstream-Status: Inappropriate [needs discussion upstream first]
+
+Signed-off-by: Rob Woolley <rob.woolley@windriver.com>
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+diff --git a/cmake/kconfig.cmake b/cmake/kconfig.cmake
+index 741e5e85bf..854d2e9827 100644
+--- a/cmake/kconfig.cmake
++++ b/cmake/kconfig.cmake
+@@ -297,7 +297,12 @@ if(EXISTS ${BOARD_DEFCONFIG})
+ 		set(CMAKE_SYSTEM_PROCESSOR ${ARCHITECTURE} CACHE INTERNAL "system processor" FORCE)
+ 	endif()
+ 
+-	if(TOOLCHAIN)
++	# Don't override a toolchain file provided on the command line (e.g. by a
++	# distribution build system such as Yocto/OpenEmbedded, which passes its own
++	# cross toolchain via -DCMAKE_TOOLCHAIN_FILE). The board toolchain is only a
++	# default; forcing it here would also make subprojects that forward
++	# CMAKE_TOOLCHAIN_FILE pick the wrong compilers and sysroot.
++	if(TOOLCHAIN AND NOT CMAKE_TOOLCHAIN_FILE)
+ 		set(CMAKE_TOOLCHAIN_FILE Toolchain-${TOOLCHAIN} CACHE INTERNAL "toolchain file" FORCE)
+ 	endif()
+ 

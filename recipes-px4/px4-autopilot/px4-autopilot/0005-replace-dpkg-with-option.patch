@@ -1,0 +1,61 @@
+Replace DPKG_PROGRAM with a PX4_PACKAGE option
+
+This allows us to conditionally enable packaging on the command-line.
+
+Signed-off-by: Rob Woolley <rob.woolley@windriver.com>
+
+--- a/platforms/posix/CMakeLists.txt
++++ b/platforms/posix/CMakeLists.txt
+@@ -85,13 +85,19 @@
+ 
+ # Detect dpkg early so install rules can branch on it.
+ # find_program caches the result, so the later call in package.cmake is a no-op.
++
+ find_program(DPKG_PROGRAM dpkg)
++if(DPKG_PROGRAM)
++	set(PX4_PACKAGE ON)
++endif()
++
++option(PX4_PACKAGE "Package PX4 for Linux environment" OFF)
+ 
+ # TODO: extend to snapdragon
+ 
+ # Legacy top-level install (posix-configs, test data, etc into px4/ prefix).
+ # Skip when building .deb packages which use a clean /opt/px4-sitl{,-sih}/ layout.
+-if(NOT DPKG_PROGRAM)
++if(NOT PX4_PACKAGE)
+ install(
+ 	DIRECTORY
+ 		${PROJECT_SOURCE_DIR}/posix-configs
+@@ -168,7 +174,7 @@
+ 	# Legacy install rules (used by ROS launch, existing CPack tarball workflow).
+ 	# Skip when building .deb packages: the .deb rules below provide a clean
+ 	# /opt/px4-sitl{,-sih}/ layout and these would duplicate/bloat the package.
+-	if(NOT DPKG_PROGRAM)
++	if(NOT PX4_PACKAGE)
+ 
+ 	# px4 dirs
+ 	install(
+@@ -226,12 +232,12 @@
+ 		OPTIONAL
+ 		)
+ 
+-	endif() # NOT DPKG_PROGRAM
++	endif() # NOT PX4_PACKAGE
+ 
+ 	####################################################################
+ 	# Install rules for .deb package (only when dpkg is available)
+ 	####################################################################
+-	if(DPKG_PROGRAM AND NOT CMAKE_C_COMPILER MATCHES "emcc$")
++	if(PX4_PACKAGE AND NOT CMAKE_C_COMPILER MATCHES "emcc$")
+ 
+ 	# px4 binary
+ 	install(TARGETS px4
+@@ -302,6 +308,6 @@
+ 		)
+ 	endif()
+ 
+-	endif() # DPKG_PROGRAM AND NOT emcc
++	endif() # PX4_PACKAGE AND NOT emcc
+ 
+ endif()
