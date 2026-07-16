@@ -1,0 +1,785 @@
+From c67c16b018a106e1114c956986e1aa231f53fc77 Mon Sep 17 00:00:00 2001
+From: Rob Woolley <rob.woolley@windriver.com>
+Date: Thu, 16 Jul 2026 07:46:01 -0400
+Subject: [PATCH] Replace catkin build with plain setuptools packaging
+
+Convert genmsg to a standard Python package built with setuptools
+using PEP 621 metadata in pyproject.toml:
+
+- Add pyproject.toml with project metadata carried over from
+  package.xml, an empy runtime dependency, and pytest configuration
+- Move scripts/genmsg_check_deps.py into the package as
+  genmsg.check_deps and expose it as a genmsg_check_deps
+  console script entry point
+- Remove setup.py, CMakeLists.txt, package.xml, and the cmake/
+  templates; catkin builds and downstream cmake-based message
+  generation are no longer supported
+
+Signed-off-by: Rob Woolley <rob.woolley@windriver.com>
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ CMakeLists.txt                                |  24 --
+ cmake/genmsg-extras.cmake.em                  | 318 ------------------
+ cmake/pkg-genmsg.cmake.em                     | 167 ---------
+ cmake/pkg-genmsg.context.in                   |  11 -
+ cmake/pkg-msg-extras.cmake.in                 |   2 -
+ cmake/pkg-msg-paths.cmake.develspace.in       |   4 -
+ cmake/pkg-msg-paths.cmake.installspace.in     |   4 -
+ package.xml                                   |  34 --
+ pyproject.toml                                |  38 +++
+ setup.py                                      |   9 -
+ .../genmsg/check_deps.py                      |  48 +--
+ 11 files changed, 64 insertions(+), 595 deletions(-)
+ delete mode 100644 CMakeLists.txt
+ delete mode 100644 cmake/genmsg-extras.cmake.em
+ delete mode 100644 cmake/pkg-genmsg.cmake.em
+ delete mode 100644 cmake/pkg-genmsg.context.in
+ delete mode 100644 cmake/pkg-msg-extras.cmake.in
+ delete mode 100644 cmake/pkg-msg-paths.cmake.develspace.in
+ delete mode 100644 cmake/pkg-msg-paths.cmake.installspace.in
+ delete mode 100644 package.xml
+ create mode 100644 pyproject.toml
+ delete mode 100644 setup.py
+ rename scripts/genmsg_check_deps.py => src/genmsg/check_deps.py (63%)
+ mode change 100755 => 100644
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+deleted file mode 100644
+index ca69998..0000000
+--- a/CMakeLists.txt
++++ /dev/null
+@@ -1,24 +0,0 @@
+-cmake_minimum_required(VERSION 3.0.2)
+-project(genmsg)
+-find_package(catkin REQUIRED)
+-
+-catkin_package(CFG_EXTRAS genmsg-extras.cmake)
+-
+-install(
+-  FILES
+-  cmake/pkg-genmsg.cmake.em
+-  cmake/pkg-genmsg.context.in
+-  cmake/pkg-msg-extras.cmake.in
+-  cmake/pkg-msg-paths.cmake.develspace.in
+-  cmake/pkg-msg-paths.cmake.installspace.in
+-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/cmake)
+-
+-catkin_python_setup()
+-
+-catkin_install_python(
+-  PROGRAMS scripts/genmsg_check_deps.py
+-  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+-
+-if(CATKIN_ENABLE_TESTING)
+-  catkin_add_nosetests(test)
+-endif()
+diff --git a/cmake/genmsg-extras.cmake.em b/cmake/genmsg-extras.cmake.em
+deleted file mode 100644
+index 8d3ef68..0000000
+--- a/cmake/genmsg-extras.cmake.em
++++ /dev/null
+@@ -1,318 +0,0 @@
+-# generated from genmsg/cmake/genmsg-extras.cmake.in
+-
+-if(_GENMSG_EXTRAS_INCLUDED_)
+-  return()
+-endif()
+-set(_GENMSG_EXTRAS_INCLUDED_ TRUE)
+-
+-# We need various macros and variables that are provided by catkin
+-find_package(catkin REQUIRED)
+-
+-# set destination for langs
+-set(GENMSG_LANGS_DESTINATION "${CATKIN_GLOBAL_ETC_DESTINATION}/ros/genmsg")
+-
+-@[if DEVELSPACE]@
+-# bin dir variables in develspace
+-set(GENMSG_CHECK_DEPS_SCRIPT "@(CMAKE_CURRENT_SOURCE_DIR)/scripts/genmsg_check_deps.py")
+-@[else]@
+-# bin dir variables in installspace
+-set(GENMSG_CHECK_DEPS_SCRIPT "${genmsg_DIR}/../../../@(CATKIN_PACKAGE_BIN_DESTINATION)/genmsg_check_deps.py")
+-@[end if]@
+-
+-include(CMakeParseArguments)
+-
+-# find message generators in all workspaces
+-set(message_generators "")
+-foreach(workspace ${CATKIN_WORKSPACES})
+-  file(GLOB workspace_message_generators
+-    RELATIVE ${workspace}/${GENMSG_LANGS_DESTINATION}
+-    ${workspace}/${GENMSG_LANGS_DESTINATION}/gen*)
+-  list(APPEND message_generators ${workspace_message_generators})
+-endforeach()
+-if(message_generators)
+-  list(SORT message_generators)
+-endif()
+-
+-foreach(message_generator ${message_generators})
+-  find_package(${message_generator} REQUIRED)
+-  list(FIND CATKIN_MESSAGE_GENERATORS ${message_generator} _index)
+-  if(_index EQUAL -1)
+-    list(APPEND CATKIN_MESSAGE_GENERATORS ${message_generator})
+-  endif()
+-endforeach()
+-if(CATKIN_MESSAGE_GENERATORS)
+-  list(SORT CATKIN_MESSAGE_GENERATORS)
+-endif()
+-
+-# disable specific message generators
+-string(REPLACE ":" ";" _disabled_message_generators "$ENV{ROS_LANG_DISABLE}")
+-# remove unknown generators from disabled list
+-foreach(message_generator ${_disabled_message_generators})
+-  list(FIND CATKIN_MESSAGE_GENERATORS ${message_generator} _index)
+-  if(_index EQUAL -1)
+-    list(REMOVE_ITEM _disabled_message_generators ${message_generator})
+-    message(WARNING "Unknown message generator specified in ROS_LANG_DISABLE: ${message_generator}")
+-  endif()
+-endforeach()
+-if(_disabled_message_generators)
+-  message(STATUS "Disabling the following message generators: ${_disabled_message_generators}")
+-  list(REMOVE_ITEM CATKIN_MESSAGE_GENERATORS ${_disabled_message_generators})
+-endif()
+-message(STATUS "Using these message generators: ${CATKIN_MESSAGE_GENERATORS}")
+-
+-macro(_prepend_path ARG_PATH ARG_FILES ARG_OUTPUT_VAR)
+-  cmake_parse_arguments(ARG "UNIQUE" "" "" ${ARGN})
+-  if(ARG_UNPARSED_ARGUMENTS)
+-    message(FATAL_ERROR "_prepend_path() called with unused arguments: ${ARG_UNPARSED_ARGUMENTS}")
+-  endif()
+-  # todo, check for proper path, slasheds, etc
+-  set(${ARG_OUTPUT_VAR} "")
+-  foreach(_file ${ARG_FILES})
+-    set(_value ${ARG_PATH}/${_file})
+-    list(FIND ${ARG_OUTPUT_VAR} ${_value} _index)
+-    if(NOT ARG_UNIQUE OR _index EQUAL -1)
+-      list(APPEND ${ARG_OUTPUT_VAR} ${_value})
+-    endif()
+-  endforeach()
+-endmacro()
+-
+-macro(add_message_files)
+-  cmake_parse_arguments(ARG "NOINSTALL" "DIRECTORY;BASE_DIR" "FILES" ${ARGN})
+-  if(ARG_UNPARSED_ARGUMENTS)
+-    message(FATAL_ERROR "add_message_files() called with unused arguments: ${ARG_UNPARSED_ARGUMENTS}")
+-  endif()
+-
+-  if(NOT ARG_DIRECTORY)
+-    set(ARG_DIRECTORY "msg")
+-  endif()
+-
+-  set(MESSAGE_DIR "${ARG_DIRECTORY}")
+-  if(NOT IS_ABSOLUTE "${MESSAGE_DIR}")
+-    set(MESSAGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${MESSAGE_DIR}")
+-  endif()
+-  # override message directory (used by add_action_files())
+-  if(ARG_BASE_DIR)
+-    set(MESSAGE_DIR ${ARG_BASE_DIR})
+-  endif()
+-
+-  if(NOT IS_DIRECTORY ${MESSAGE_DIR})
+-    message(FATAL_ERROR "add_message_files() directory not found: ${MESSAGE_DIR}")
+-  endif()
+-
+-  if(${PROJECT_NAME}_GENERATE_MESSAGES)
+-    message(FATAL_ERROR "generate_messages() must be called after add_message_files()")
+-  endif()
+-
+-  # if FILES are not passed search message files in the given directory
+-  # note: ARGV is not variable, so it can not be passed to list(FIND) directly
+-  set(_argv ${ARGV})
+-  list(FIND _argv "FILES" _index)
+-  if(_index EQUAL -1)
+-    file(GLOB ARG_FILES RELATIVE "${MESSAGE_DIR}" "${MESSAGE_DIR}/*.msg")
+-    list(SORT ARG_FILES)
+-  endif()
+-  _prepend_path(${MESSAGE_DIR} "${ARG_FILES}" FILES_W_PATH)
+-
+-  list(APPEND ${PROJECT_NAME}_MESSAGE_FILES ${FILES_W_PATH})
+-  foreach(file ${FILES_W_PATH})
+-    assert_file_exists(${file} "message file not found")
+-  endforeach()
+-
+-  # remember path to messages to resolve them as dependencies
+-  list(FIND ${PROJECT_NAME}_MSG_INCLUDE_DIRS_DEVELSPACE ${MESSAGE_DIR} _index)
+-  if(_index EQUAL -1)
+-    list(APPEND ${PROJECT_NAME}_MSG_INCLUDE_DIRS_DEVELSPACE ${MESSAGE_DIR})
+-  endif()
+-
+-  if(NOT ARG_NOINSTALL)
+-    # ensure that destination variables are initialized
+-    catkin_destinations()
+-
+-    list(APPEND ${PROJECT_NAME}_MSG_INCLUDE_DIRS_INSTALLSPACE ${ARG_DIRECTORY})
+-    install(FILES ${FILES_W_PATH}
+-      DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/${ARG_DIRECTORY})
+-
+-    _prepend_path("${ARG_DIRECTORY}" "${ARG_FILES}" FILES_W_PATH)
+-    list(APPEND ${PROJECT_NAME}_INSTALLED_MESSAGE_FILES ${FILES_W_PATH})
+-  endif()
+-endmacro()
+-
+-macro(add_service_files)
+-  cmake_parse_arguments(ARG "NOINSTALL" "DIRECTORY" "FILES" ${ARGN})
+-  if(ARG_UNPARSED_ARGUMENTS)
+-    message(FATAL_ERROR "add_service_files() called with unused arguments: ${ARG_UNPARSED_ARGUMENTS}")
+-  endif()
+-
+-  if(NOT ARG_DIRECTORY)
+-    set(ARG_DIRECTORY "srv")
+-  endif()
+-
+-  set(SERVICE_DIR "${ARG_DIRECTORY}")
+-  if(NOT IS_ABSOLUTE "${SERVICE_DIR}")
+-    set(SERVICE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/${SERVICE_DIR}")
+-  endif()
+-
+-  if(NOT IS_DIRECTORY ${SERVICE_DIR})
+-    message(FATAL_ERROR "add_service_files() directory not found: ${SERVICE_DIR}")
+-  endif()
+-
+-  if(${PROJECT_NAME}_GENERATE_MESSAGES)
+-    message(FATAL_ERROR "generate_messages() must be called after add_service_files()")
+-  endif()
+-
+-  # if FILES are not passed search service files in the given directory
+-  # note: ARGV is not variable, so it can not be passed to list(FIND) directly
+-  set(_argv ${ARGV})
+-  list(FIND _argv "FILES" _index)
+-  if(_index EQUAL -1)
+-    file(GLOB ARG_FILES RELATIVE "${SERVICE_DIR}" "${SERVICE_DIR}/*.srv")
+-    list(SORT ARG_FILES)
+-  endif()
+-  _prepend_path(${SERVICE_DIR} "${ARG_FILES}" FILES_W_PATH)
+-
+-  list(APPEND ${PROJECT_NAME}_SERVICE_FILES ${FILES_W_PATH})
+-  foreach(file ${FILES_W_PATH})
+-    assert_file_exists(${file} "service file not found")
+-  endforeach()
+-
+-  if(NOT ARG_NOINSTALL)
+-    # ensure that destination variables are initialized
+-    catkin_destinations()
+-
+-    install(FILES ${FILES_W_PATH}
+-      DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/${ARG_DIRECTORY})
+-
+-    _prepend_path("${ARG_DIRECTORY}" "${ARG_FILES}" FILES_W_PATH)
+-    list(APPEND ${PROJECT_NAME}_INSTALLED_SERVICE_FILES ${FILES_W_PATH})
+-  endif()
+-endmacro()
+-
+-macro(generate_messages)
+-  cmake_parse_arguments(ARG "" "" "DEPENDENCIES;LANGS" ${ARGN})
+-
+-  if(${PROJECT_NAME}_GENERATE_MESSAGES)
+-    message(FATAL_ERROR "generate_messages() must only be called once per project'")
+-  endif()
+-
+-  if(ARG_UNPARSED_ARGUMENTS)
+-    message(FATAL_ERROR "generate_messages() called with unused arguments: ${ARG_UNPARSED_ARGUMENTS}")
+-  endif()
+-
+-  if(${PROJECT_NAME}_CATKIN_PACKAGE)
+-    message(FATAL_ERROR "generate_messages() must be called before catkin_package() in project '${PROJECT_NAME}'")
+-  endif()
+-
+-  set(ARG_MESSAGES ${${PROJECT_NAME}_MESSAGE_FILES})
+-  set(ARG_SERVICES ${${PROJECT_NAME}_SERVICE_FILES})
+-  set(ARG_DEPENDENCIES ${ARG_DEPENDENCIES})
+-
+-  if(ARG_LANGS)
+-    set(GEN_LANGS ${ARG_LANGS})
+-  else()
+-    set(GEN_LANGS ${CATKIN_MESSAGE_GENERATORS})
+-  endif()
+-
+-@[if DEVELSPACE]@
+-  # cmake dir in develspace
+-  set(genmsg_CMAKE_DIR "@(CMAKE_CURRENT_SOURCE_DIR)/cmake")
+-@[else]@
+-  # cmake dir in installspace
+-  set(genmsg_CMAKE_DIR "@(PKG_CMAKE_DIR)")
+-@[end if]@
+-
+-  # ensure that destination variables are initialized
+-  catkin_destinations()
+-
+-  # generate devel space config of message include dirs for project
+-  set(PKG_MSG_INCLUDE_DIRS "${${PROJECT_NAME}_MSG_INCLUDE_DIRS_DEVELSPACE}")
+-  configure_file(
+-    ${genmsg_CMAKE_DIR}/pkg-msg-paths.cmake.develspace.in
+-    ${CATKIN_DEVEL_PREFIX}/share/${PROJECT_NAME}/cmake/${PROJECT_NAME}-msg-paths.cmake
+-    @@ONLY)
+-  # generate and install config of message include dirs for project
+-  set(PKG_MSG_INCLUDE_DIRS "${${PROJECT_NAME}_MSG_INCLUDE_DIRS_INSTALLSPACE}")
+-  configure_file(
+-    ${genmsg_CMAKE_DIR}/pkg-msg-paths.cmake.installspace.in
+-    ${CMAKE_CURRENT_BINARY_DIR}/catkin_generated/installspace/${PROJECT_NAME}-msg-paths.cmake
+-    @@ONLY)
+-  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/catkin_generated/installspace/${PROJECT_NAME}-msg-paths.cmake
+-    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/cmake)
+-
+-  # generate devel space pkg config extra defining variables with all processed message and service files
+-  set(PKG_MSG_FILES "${${PROJECT_NAME}_MESSAGE_FILES}")
+-  set(PKG_SRV_FILES "${${PROJECT_NAME}_SERVICE_FILES}")
+-  configure_file(
+-    ${genmsg_CMAKE_DIR}/pkg-msg-extras.cmake.in
+-    ${CMAKE_CURRENT_BINARY_DIR}/catkin_generated/${PROJECT_NAME}-msg-extras.cmake.develspace.in
+-    @@ONLY)
+-  # generate install space pkg config extra defining variables with all processed and installed message and service files
+-  set(PKG_MSG_FILES "${${PROJECT_NAME}_INSTALLED_MESSAGE_FILES}")
+-  set(PKG_SRV_FILES "${${PROJECT_NAME}_INSTALLED_SERVICE_FILES}")
+-  configure_file(
+-    ${genmsg_CMAKE_DIR}/pkg-msg-extras.cmake.in
+-    ${CMAKE_CURRENT_BINARY_DIR}/catkin_generated/${PROJECT_NAME}-msg-extras.cmake.installspace.in
+-    @@ONLY)
+-  # register pkg config files as cmake extra file for the project
+-  list(APPEND ${PROJECT_NAME}_CFG_EXTRAS ${CMAKE_CURRENT_BINARY_DIR}/catkin_generated/${PROJECT_NAME}-msg-extras.cmake)
+-
+-  # find configuration containing include dirs for projects in all devel- and installspaces
+-  set(workspaces ${CATKIN_WORKSPACES})
+-  list(FIND workspaces ${CATKIN_DEVEL_PREFIX} _index)
+-  if(_index EQUAL -1)
+-    list(INSERT workspaces 0 ${CATKIN_DEVEL_PREFIX})
+-  endif()
+-
+-  set(pending_deps ${PROJECT_NAME} ${ARG_DEPENDENCIES})
+-  set(handled_deps "")
+-  while(pending_deps)
+-    list(GET pending_deps 0 dep)
+-    list(REMOVE_AT pending_deps 0)
+-    list(APPEND handled_deps ${dep})
+-
+-    if(NOT ${dep}_FOUND AND NOT ${dep}_SOURCE_DIR)
+-      message(FATAL_ERROR "Messages depends on unknown pkg: ${dep} (Missing 'find_package(${dep})'?)")
+-    endif()
+-
+-    unset(_dep_msg_paths_file CACHE)
+-    set(filename "share/${dep}/cmake/${dep}-msg-paths.cmake")
+-    find_file(_dep_msg_paths_file ${filename} PATHS ${workspaces}
+-      NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+-    if("${_dep_msg_paths_file}" STREQUAL "_dep_msg_paths_file-NOTFOUND")
+-      message(FATAL_ERROR "Could not find '${filename}' (searched in '${workspaces}').")
+-    endif()
+-    include(${_dep_msg_paths_file})
+-    unset(_dep_msg_paths_file CACHE)
+-
+-    # explicitly set message include dirs for current project since information from pkg-msg-paths.cmake is not yet available
+-    if(${dep} STREQUAL ${PROJECT_NAME})
+-      set(${dep}_MSG_INCLUDE_DIRS ${${PROJECT_NAME}_MSG_INCLUDE_DIRS_DEVELSPACE})
+-    endif()
+-    foreach(path ${${dep}_MSG_INCLUDE_DIRS})
+-      list(APPEND MSG_INCLUDE_DIRS "${dep}")
+-      list(APPEND MSG_INCLUDE_DIRS "${path}")
+-    endforeach()
+-
+-    # add transitive msg dependencies
+-    if(NOT ${dep} STREQUAL ${PROJECT_NAME})
+-      foreach(recdep ${${dep}_MSG_DEPENDENCIES})
+-        set(all_deps ${handled_deps} ${pending_deps})
+-        list(FIND all_deps ${recdep} _index)
+-        if(_index EQUAL -1)
+-          list(APPEND pending_deps ${recdep})
+-        endif()
+-      endforeach()
+-    endif()
+-  endwhile()
+-
+-  # mark that generate_messages() was called in order to detect wrong order of calling with catkin_python_setup()
+-  set(${PROJECT_NAME}_GENERATE_MESSAGES TRUE)
+-  # check if catkin_python_setup() installs an __init__.py file for a package with the current project name
+-  # in order to skip the installation of a generated __init__.py file
+-  set(package_has_static_sources ${${PROJECT_NAME}_CATKIN_PYTHON_SETUP_HAS_PACKAGE_INIT})
+-
+-  em_expand(${genmsg_CMAKE_DIR}/pkg-genmsg.context.in
+-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}-genmsg-context.py
+-    ${genmsg_CMAKE_DIR}/pkg-genmsg.cmake.em
+-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}-genmsg.cmake)
+-  include(${CMAKE_CURRENT_BINARY_DIR}/cmake/${PROJECT_NAME}-genmsg.cmake)
+-endmacro()
+diff --git a/cmake/pkg-genmsg.cmake.em b/cmake/pkg-genmsg.cmake.em
+deleted file mode 100644
+index eca9adc..0000000
+--- a/cmake/pkg-genmsg.cmake.em
++++ /dev/null
+@@ -1,167 +0,0 @@
+-# generated from genmsg/cmake/pkg-genmsg.cmake.em
+-
+-@{
+-import os
+-import sys
+-
+-import genmsg
+-import genmsg.base
+-genmsg.base.log_verbose('GENMSG_VERBOSE' in os.environ)
+-import genmsg.deps
+-import genmsg.gentools
+-
+-# split incoming variables
+-messages = messages_str.split(';') if messages_str != '' else []
+-services = services_str.split(';') if services_str != '' else []
+-dependencies = dependencies_str.split(';') if dependencies_str != '' else []
+-dep_search_paths = dep_include_paths_str.split(';') if dep_include_paths_str != '' else []
+-
+-dep_search_paths_dict = {}
+-dep_search_paths_tuple_list = []
+-is_even = True
+-for val in dep_search_paths:
+-    if is_even:
+-        dep_search_paths_dict.setdefault(val, [])
+-        val_prev = val
+-        is_even = False
+-    else:
+-        dep_search_paths_dict[val_prev].append(val)
+-        dep_search_paths_tuple_list.append((val_prev, val))
+-        is_even = True
+-dep_search_paths = dep_search_paths_dict
+-
+-if not messages and not services:
+-    print('message(WARNING "Invoking generate_messages() without having added any message or service file before.\nYou should either add add_message_files() and/or add_service_files() calls or remove the invocation of generate_messages().")')
+-
+-msg_deps = {}
+-msg_dep_types = {}
+-for m in messages:
+-  try:
+-    _deps = genmsg.deps.find_msg_dependencies_with_type(pkg_name, m, dep_search_paths)
+-    msg_deps[m] = [d[1] for d in _deps]
+-    msg_dep_types[m] = [d[0] for d in _deps]
+-  except genmsg.MsgNotFound as e:
+-    print('message(FATAL_ERROR "Could not find messages which \'%s\' depends on. Did you forget to specify generate_messages(DEPENDENCIES ...)?\n%s")' % (m, str(e).replace('"', '\\"')))
+-
+-srv_deps = {}
+-srv_dep_types = {}
+-for s in services:
+-  try:
+-    _deps = genmsg.deps.find_srv_dependencies_with_type(pkg_name, s, dep_search_paths)
+-    srv_deps[s] = [d[1] for d in _deps]
+-    srv_dep_types[s] = [d[0] for d in _deps]
+-  except genmsg.MsgNotFound as e:
+-    print('message(FATAL_ERROR "Could not find messages which \'%s\' depends on. Did you forget to specify generate_messages(DEPENDENCIES ...)?\n%s")' % (s, str(e).replace('"', '\\"')))
+-
+-}@
+-message(STATUS "@(pkg_name): @(len(messages)) messages, @(len(services)) services")
+-
+-set(MSG_I_FLAGS "@(';'.join(["-I%s:%s" % (dep, dir) for dep, dir in dep_search_paths_tuple_list]))")
+-
+-# Find all generators
+-@[if langs]@
+-@[for l in langs.split(';')]@
+-find_package(@l REQUIRED)
+-@[end for]@
+-@[end if]@
+-
+-add_custom_target(@(pkg_name)_generate_messages ALL)
+-
+-# verify that message/service dependencies have not changed since configure
+-@{all_deps = dict(list(msg_deps.items()) + list(srv_deps.items()))}
+-@{all_dep_types = dict(list(msg_dep_types.items()) + list(srv_dep_types.items()))}
+-@[for f in all_deps.keys()]@
+-@{dep_types = ':'.join(all_dep_types[f]).replace('\\','/')}
+-get_filename_component(_filename "@(f)" NAME_WE)
+-add_custom_target(_@(pkg_name)_generate_messages_check_deps_${_filename}
+-  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "@(pkg_name)" "@(f)" "@(dep_types)"
+-)
+-@[end for]@# messages and services
+-
+-#
+-#  langs = @langs
+-#
+-
+-@[if langs]@
+-@[for l in langs.split(';')]@
+-### Section generating for lang: @l
+-### Generating Messages
+-@[for m in msg_deps.keys()]@
+-_generate_msg_@(l[3:])(@pkg_name
+-  "@m"
+-  "${MSG_I_FLAGS}"
+-  "@(';'.join(msg_deps[m]).replace("\\","/"))"
+-  ${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name
+-)
+-@[end for]@# messages
+-
+-### Generating Services
+-@[for s in srv_deps.keys()]@
+-_generate_srv_@(l[3:])(@pkg_name
+-  "@s"
+-  "${MSG_I_FLAGS}"
+-  "@(';'.join(srv_deps[s]).replace("\\","/"))"
+-  ${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name
+-)
+-@[end for]@# services
+-
+-### Generating Module File
+-_generate_module_@(l[3:])(@pkg_name
+-  ${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name
+-  "${ALL_GEN_OUTPUT_FILES_@(l[3:])}"
+-)
+-
+-add_custom_target(@(pkg_name)_generate_messages_@(l[3:])
+-  DEPENDS ${ALL_GEN_OUTPUT_FILES_@(l[3:])}
+-)
+-add_dependencies(@(pkg_name)_generate_messages @(pkg_name)_generate_messages_@(l[3:]))
+-
+-# add dependencies to all check dependencies targets
+-@[for f in all_deps.keys()]@
+-get_filename_component(_filename "@(f)" NAME_WE)
+-add_dependencies(@(pkg_name)_generate_messages_@(l[3:]) _@(pkg_name)_generate_messages_check_deps_${_filename})
+-@[end for]@# messages and services
+-
+-# target for backward compatibility
+-add_custom_target(@(pkg_name)_@(l))
+-add_dependencies(@(pkg_name)_@(l) @(pkg_name)_generate_messages_@(l[3:]))
+-
+-# register target for catkin_package(EXPORTED_TARGETS)
+-list(APPEND ${PROJECT_NAME}_EXPORTED_TARGETS @(pkg_name)_generate_messages_@(l[3:]))
+-
+-@[end for]@# langs
+-@[end if]@
+-
+-@[if langs]@
+-@[for l in langs.split(';')]@
+-
+-if(@(l)_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name)
+-@[if l == 'genpy']@
+-  install(CODE "execute_process(COMMAND \"@(PYTHON_EXECUTABLE)\" -m compileall \"${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name\")")
+-@[end if]@
+-  # install generated code
+-  install(
+-    DIRECTORY ${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name
+-    DESTINATION ${@(l)_INSTALL_DIR}
+-@[if l == 'genpy' and package_has_static_sources]@
+-    # skip all init files
+-    PATTERN "__init__.py" EXCLUDE
+-    PATTERN "__init__.pyc" EXCLUDE
+-  )
+-  # install init files which are not in the root folder of the generated code
+-  string(REGEX REPLACE "([][+.*()^])" "\\\\\\1" ESCAPED_PATH "${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@(pkg_name)")
+-  install(
+-    DIRECTORY ${CATKIN_DEVEL_PREFIX}/${@(l)_INSTALL_DIR}/@pkg_name
+-    DESTINATION ${@(l)_INSTALL_DIR}
+-    FILES_MATCHING
+-    REGEX "${ESCAPED_PATH}/.+/__init__.pyc?$"
+-@[end if]@
+-  )
+-endif()
+-@[for d in dependencies]@
+-if(TARGET @(d)_generate_messages_@(l[3:]))
+-  add_dependencies(@(pkg_name)_generate_messages_@(l[3:]) @(d)_generate_messages_@(l[3:]))
+-endif()
+-@[end for]@# dependencies
+-@[end for]@# langs
+-@[end if]@
+diff --git a/cmake/pkg-genmsg.context.in b/cmake/pkg-genmsg.context.in
+deleted file mode 100644
+index db37414..0000000
+--- a/cmake/pkg-genmsg.context.in
++++ /dev/null
+@@ -1,11 +0,0 @@
+-# generated from genmsg/cmake/pkg-genmsg.context.in
+-
+-messages_str = "@ARG_MESSAGES@"
+-services_str = "@ARG_SERVICES@"
+-pkg_name = "@PROJECT_NAME@"
+-dependencies_str = "@ARG_DEPENDENCIES@"
+-langs = "@GEN_LANGS@"
+-dep_include_paths_str = "@MSG_INCLUDE_DIRS@"
+-PYTHON_EXECUTABLE = "@PYTHON_EXECUTABLE@"
+-package_has_static_sources = '@package_has_static_sources@' == 'TRUE'
+-genmsg_check_deps_script = "@GENMSG_CHECK_DEPS_SCRIPT@"
+diff --git a/cmake/pkg-msg-extras.cmake.in b/cmake/pkg-msg-extras.cmake.in
+deleted file mode 100644
+index 089ac47..0000000
+--- a/cmake/pkg-msg-extras.cmake.in
++++ /dev/null
+@@ -1,2 +0,0 @@
+-set(@PROJECT_NAME@_MESSAGE_FILES "@PKG_MSG_FILES@")
+-set(@PROJECT_NAME@_SERVICE_FILES "@PKG_SRV_FILES@")
+diff --git a/cmake/pkg-msg-paths.cmake.develspace.in b/cmake/pkg-msg-paths.cmake.develspace.in
+deleted file mode 100644
+index c1024d2..0000000
+--- a/cmake/pkg-msg-paths.cmake.develspace.in
++++ /dev/null
+@@ -1,4 +0,0 @@
+-# generated from genmsg/cmake/pkg-msg-paths.cmake.develspace.in
+-
+-set(@PROJECT_NAME@_MSG_INCLUDE_DIRS "@PKG_MSG_INCLUDE_DIRS@")
+-set(@PROJECT_NAME@_MSG_DEPENDENCIES @ARG_DEPENDENCIES@)
+diff --git a/cmake/pkg-msg-paths.cmake.installspace.in b/cmake/pkg-msg-paths.cmake.installspace.in
+deleted file mode 100644
+index 1d35efd..0000000
+--- a/cmake/pkg-msg-paths.cmake.installspace.in
++++ /dev/null
+@@ -1,4 +0,0 @@
+-# generated from genmsg/cmake/pkg-msg-paths.cmake.installspace.in
+-
+-_prepend_path("${@PROJECT_NAME@_DIR}/.." "@PKG_MSG_INCLUDE_DIRS@" @PROJECT_NAME@_MSG_INCLUDE_DIRS UNIQUE)
+-set(@PROJECT_NAME@_MSG_DEPENDENCIES @ARG_DEPENDENCIES@)
+diff --git a/package.xml b/package.xml
+deleted file mode 100644
+index bd49bb5..0000000
+--- a/package.xml
++++ /dev/null
+@@ -1,34 +0,0 @@
+-<?xml version="1.0"?>
+-<?xml-model
+-  href="http://download.ros.org/schema/package_format3.xsd"
+-  schematypens="http://www.w3.org/2001/XMLSchema"?>
+-<package format="3">
+-  <name>genmsg</name>
+-  <version>0.6.1</version>
+-  <description>
+-    Standalone Python library for generating ROS message and service data structures for various languages.
+-  </description>
+-  <maintainer email="dthomas@osrfoundation.org">Dirk Thomas</maintainer>
+-  <license>BSD</license>
+-
+-  <url type="website">http://wiki.ros.org/genmsg</url>
+-  <url type="bugtracker">https://github.com/ros/genmsg/issues</url>
+-  <url type="repository">https://github.com/ros/genmsg</url>
+-
+-  <author>Troy Straszheim</author>
+-  <author>Morten Kjaergaard</author>
+-  <author>Ken Conley</author>
+-  <author>Dirk Thomas</author>
+-
+-  <buildtool_depend version_gte="0.5.74">catkin</buildtool_depend>
+-  <buildtool_depend condition="$ROS_PYTHON_VERSION == 2">python-setuptools</buildtool_depend>
+-  <buildtool_depend condition="$ROS_PYTHON_VERSION == 3">python3-setuptools</buildtool_depend>
+-  <exec_depend>catkin</exec_depend>
+-  <exec_depend condition="$ROS_PYTHON_VERSION == 2">python-empy</exec_depend>
+-  <exec_depend condition="$ROS_PYTHON_VERSION == 3">python3-empy</exec_depend>
+-
+-  <export>
+-    <rosdoc config="rosdoc.yaml"/>
+-    <architecture_independent/>
+-  </export>
+-</package>
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..d4bec45
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,38 @@
++[build-system]
++requires = ["setuptools>=61"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "genmsg"
++version = "0.6.1"
++description = "Standalone Python library for generating ROS message and service data structures for various languages."
++readme = "README.md"
++license = {text = "BSD-3-Clause"}
++requires-python = ">=3.6"
++authors = [
++    {name = "Troy Straszheim"},
++    {name = "Morten Kjaergaard"},
++    {name = "Ken Conley"},
++    {name = "Dirk Thomas", email = "dthomas@osrfoundation.org"},
++]
++maintainers = [
++    {name = "Dirk Thomas", email = "dthomas@osrfoundation.org"},
++]
++dependencies = [
++    "empy",
++]
++
++[project.urls]
++Homepage = "http://wiki.ros.org/genmsg"
++Repository = "https://github.com/ros/genmsg"
++Issues = "https://github.com/ros/genmsg/issues"
++
++[project.scripts]
++genmsg_check_deps = "genmsg.check_deps:main"
++
++[tool.setuptools.packages.find]
++where = ["src"]
++
++[tool.pytest.ini_options]
++testpaths = ["test"]
++pythonpath = ["src"]
+diff --git a/setup.py b/setup.py
+deleted file mode 100644
+index a9b9fc6..0000000
+--- a/setup.py
++++ /dev/null
+@@ -1,9 +0,0 @@
+-from setuptools import setup
+-from catkin_pkg.python_setup import generate_distutils_setup
+-
+-d = generate_distutils_setup(
+-    packages=['genmsg'],
+-    package_dir={'': 'src'}
+-)
+-
+-setup(**d)
+diff --git a/scripts/genmsg_check_deps.py b/src/genmsg/check_deps.py
+old mode 100755
+new mode 100644
+similarity index 63%
+rename from scripts/genmsg_check_deps.py
+rename to src/genmsg/check_deps.py
+index 2f295a8..fbcb658
+--- a/scripts/genmsg_check_deps.py
++++ b/src/genmsg/check_deps.py
+@@ -1,5 +1,3 @@
+-#!/usr/bin/env python
+-
+ # Software License Agreement (BSD License)
+ #
+ # Copyright (c) 2014, Open Source Robotics Foundation, Inc.
+@@ -43,27 +41,33 @@
+ from genmsg.msg_loader import load_msg_from_file, load_srv_from_file
+ from genmsg.msgs import bare_msg_type, is_builtin, resolve_type
+ 
+-pkg_name = sys.argv[1]
+-msg_file = sys.argv[2]
+-deps = sys.argv[3].split(':') if len(sys.argv) > 3 else []
+ 
+-msg_context = MsgContext.create_default()
+-full_type_name = compute_full_type_name(pkg_name, os.path.basename(msg_file))
++def main(argv=sys.argv):
++    pkg_name = argv[1]
++    msg_file = argv[2]
++    deps = argv[3].split(':') if len(argv) > 3 else []
+ 
+-if msg_file.endswith(EXT_MSG):
+-    spec = load_msg_from_file(msg_context, msg_file, full_type_name)
+-    unresolved_types = spec.types
+-elif msg_file.endswith(EXT_SRV):
+-    spec = load_srv_from_file(msg_context, msg_file, full_type_name)
+-    unresolved_types = spec.request.types + spec.response.types
+-else:
+-    print("Processing file: '%s' - unknown file extension" % msg_file, file=sys.stderr)
+-    sys.exit(1)
++    msg_context = MsgContext.create_default()
++    full_type_name = compute_full_type_name(pkg_name, os.path.basename(msg_file))
+ 
+-package_context = spec.package
+-for unresolved_type in unresolved_types:
+-    bare_type = bare_msg_type(unresolved_type)
+-    resolved_type = resolve_type(bare_type, package_context)
+-    if not is_builtin(resolved_type) and resolved_type not in deps:
+-        print("The dependencies of the message/service '%s' have changed. Please rerun cmake." % spec.full_name, file=sys.stderr)
++    if msg_file.endswith(EXT_MSG):
++        spec = load_msg_from_file(msg_context, msg_file, full_type_name)
++        unresolved_types = spec.types
++    elif msg_file.endswith(EXT_SRV):
++        spec = load_srv_from_file(msg_context, msg_file, full_type_name)
++        unresolved_types = spec.request.types + spec.response.types
++    else:
++        print("Processing file: '%s' - unknown file extension" % msg_file, file=sys.stderr)
+         sys.exit(1)
++
++    package_context = spec.package
++    for unresolved_type in unresolved_types:
++        bare_type = bare_msg_type(unresolved_type)
++        resolved_type = resolve_type(bare_type, package_context)
++        if not is_builtin(resolved_type) and resolved_type not in deps:
++            print("The dependencies of the message/service '%s' have changed. Please rerun cmake." % spec.full_name, file=sys.stderr)
++            sys.exit(1)
++
++
++if __name__ == '__main__':
++    main()
