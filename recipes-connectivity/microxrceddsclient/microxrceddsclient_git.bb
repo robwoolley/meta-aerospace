@@ -50,3 +50,5 @@ EXTRA_OECMAKE = " \
 
 # Static library and headers only.
 ALLOW_EMPTY:${PN} = "1"
+
+FILES:${PN}-dev += "${datadir}/microxrcedds_client"
