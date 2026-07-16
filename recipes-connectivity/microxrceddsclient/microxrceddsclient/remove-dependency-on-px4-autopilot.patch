@@ -1,0 +1,30 @@
+Remove dependency on PX4-Autopilot
+
+When microxrceddsclient is built for PX4 it includes the PX4 drv_hrt.h
+for access to hrt_absolute_time.
+
+We replace the include on the header with a external function prototype.
+
+Signed-off-By: Rob Woolley <rob.woolley@windriver.com>
+
+diff --git a/src/c/util/time.c b/src/c/util/time.c
+index 12aec56..b9ffcdc 100644
+--- a/src/c/util/time.c
++++ b/src/c/util/time.c
+@@ -21,7 +21,15 @@
+ #endif
+ 
+ #define __EXPORT __attribute__ ((visibility ("default")))
+-#include <drivers/drv_hrt.h>
++/**
++ * Absolute time, in microsecond units.
++ *
++ * Absolute time is measured from some arbitrary epoch shortly after
++ * system startup.  It should never wrap or go backwards.
++ */
++typedef uint64_t	hrt_abstime;
++
++__EXPORT extern hrt_abstime hrt_absolute_time(void);
+ 
+ #endif // PX4
+ 

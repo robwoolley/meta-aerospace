@@ -15,7 +15,8 @@ DEPENDS = "microcdr"
 # CONFIG_UXRCE_DDS_CLIENT_USE_DDS_V3, use the Micro-XRCE-DDS-Client-v3 pin
 # instead (branch "px4-release/3", c88fb537e89a1095c49a6a535a55378d4c14cf2c)
 # together with microcdr 2.0.2.
-SRC_URI = "git://github.com/PX4/Micro-XRCE-DDS-Client.git;protocol=https;branch=px4"
+SRC_URI = "git://github.com/PX4/Micro-XRCE-DDS-Client.git;protocol=https;branch=px4 \
+           file://remove-dependency-on-px4-autopilot.patch"
 SRCREV = "711aef423edd1820347b866d1e4164832df35d04"
 
 PV = "2.0.1+git"
