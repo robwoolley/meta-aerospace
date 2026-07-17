@@ -11,6 +11,16 @@ OpenEmbedded recipes for building PX4-Autopilot (posix platform)
 | `microxrceddsclient` | eProsima Micro XRCE-DDS Client (PX4 fork), normally built by PX4 as a nested `ExternalProject_Add`. |
 | `cyclonedds-px4-native` | Host `idlc` with the `cdrstream-desc` feature, normally bootstrapped by PX4 at configure time with a hardcoded `/usr/bin/gcc`. |
 
+## Quick start (with kas, on ELISA Space Grade Linux)
+
+```sh
+git clone <this repo> layers/meta-aerospace
+kas build layers/meta-aerospace/kas/px4-sgl-qemuarm64.yml
+```
+
+This builds `core-image-minimal` for `qemuarm64` with `px4-autopilot`
+installed (default board config `px4_sitl_default`, see below).
+
 ## Carried patches (px4-autopilot)
 
 1. **kconfig toolchain guard** — PX4's `cmake/kconfig.cmake` force-overrides
@@ -67,7 +77,9 @@ config with any **posix**-platform config (e.g. `emlid_navio2_default`).
   enabled. Keep the default Release build type or patch it out.
 - **Big-endian targets**: `microcdr` is built with default (little-endian)
   endianness config; pass `-DCONFIG_BIG_ENDIANNESS=ON` for BE machines.
-- The python `-native` dependencies (`empy`, `kconfiglib`, `cerberus`,
-  `pyros-genmsg`, …) come from meta-openembedded/meta-python and meta-ros;
-  add recipes to this layer for any your distro does not already provide.
-  PX4 requires empy < 4 (3.3.4 is known good).
+- The python `-native` dependencies come from oe-core and
+  meta-openembedded/meta-python (`kconfiglib`, `jsonschema`, `matplotlib`,
+  …); the ones neither provides (`empy`, `lark-parser`, `pyros-genmsg`,
+  `pymavlink`, `pyulog`, `nunavut`) are carried in this layer under
+  `recipes-devtools/`, along with a `cerberus` newer than meta-python's.
+  PX4 requires empy < 4 (the layer's 3.3.2 recipe satisfies this).
